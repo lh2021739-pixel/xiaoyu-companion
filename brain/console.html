@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小屿 · 演示控制台</title>
+<style>
+:root{
+  --bg:#f3f4f1; --panel:#ffffff; --ink:#1e2320; --muted:#66706a; --line:#dde1dc;
+  --accent:#2d7d6f; --accent-soft:#e0f0ec; --story:#6a5acd; --story-soft:#ecebfb; --warm:#c9792b; --warm-soft:#fbefe2;
+  --font:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141716; --panel:#1d2220; --ink:#e8ece9; --muted:#9daaa4; --line:#323a36;
+  --accent:#62c4b3; --accent-soft:#1d3532; --story:#a99ff2; --story-soft:#29264a; --warm:#f0a35e; --warm-soft:#3a2a1c; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.55}
+header{display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:20px;margin:0;font-weight:800}
+.chips{display:flex;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;background:var(--panel)}
+main{display:grid;grid-template-columns:300px minmax(0,1fr) 360px;gap:16px;padding:16px 20px;height:calc(100vh - 130px)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:auto;min-width:0}
+.panel h2{font-size:14px;margin:0 0 10px;color:var(--muted);font-weight:600;letter-spacing:.04em}
+.face{display:flex;flex-direction:column;align-items:center;gap:10px}
+.face svg{width:200px;height:200px}
+.emo{font-size:22px;font-weight:800}
+.status{font-size:14px;color:var(--muted)}
+.meter{width:100%;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--accent);width:0%}
+.kv{display:grid;grid-template-columns:72px 1fr;gap:4px 8px;font-size:13px;margin-top:14px;width:100%}
+.kv span:nth-child(odd){color:var(--muted)}
+.msg{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+.msg .who{font-size:12px;color:var(--muted)}
+.bubble{padding:9px 12px;border-radius:12px;max-width:85%;width:fit-content;font-size:16px}
+.user .bubble{background:var(--warm-soft)}
+.bot{align-items:flex-start}
+.bot .bubble{background:var(--accent-soft)}
+.user{align-items:flex-end}
+.meta{font-size:11.5px;color:var(--muted)}
+.ev{border-left:3px solid var(--accent);padding:4px 10px;margin-bottom:8px;font-size:13.5px}
+.ev.story{border-color:var(--story)}
+.tag{font-size:11px;padding:0 6px;border-radius:6px;margin-right:6px}
+.tag.robot{background:var(--accent-soft);color:var(--accent)}
+.tag.story{background:var(--story-soft);color:var(--story)}
+.prof li{font-size:13.5px;margin-bottom:4px}
+.prof ul{margin:4px 0 12px;padding-left:18px}
+footer{display:flex;gap:10px;padding:0 20px 16px;flex-wrap:wrap;align-items:center}
+footer input{flex:1;min-width:240px;font:inherit;font-size:16px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+footer select,footer button{font:inherit;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+footer button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:700}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.notes{width:100%;align-self:stretch;font-size:12px;color:var(--muted);white-space:pre-wrap;margin-top:12px;border-top:1px dashed var(--line);padding-top:8px;max-height:180px;overflow:auto}
+@media (max-width:1000px){main{grid-template-columns:1fr;height:auto}}
+</style>
+</head>
+<body>
+<header>
+  <h1>小屿 · 演示控制台</h1>
+  <div class="chips" id="chips"></div>
+</header>
+<main>
+  <section class="panel face">
+    <h2 style="align-self:flex-start">小屿现在</h2>
+    <svg id="face" viewBox="0 0 200 200" role="img" aria-label="小屿的表情"></svg>
+    <div class="emo" id="emo">平静</div>
+    <div class="status" id="status">等待</div>
+    <div class="meter" title="麦克风音量"><i id="lvl"></i></div>
+    <div class="kv" id="kv"></div>
+    <div class="notes" id="notes"></div>
+  </section>
+  <section class="panel">
+    <h2>对话</h2>
+    <div id="chat"></div>
+  </section>
+  <section class="panel">
+    <h2>记忆本（故事和机器人共用）</h2>
+    <div class="prof" id="profile"></div>
+    <h2>事件</h2>
+    <div id="events"></div>
+  </section>
+</main>
+<footer>
+  <input id="text" placeholder="现场太吵时，在这里打字代替说话，回车发送">
+  <select id="tone" aria-label="语气">
+    <option>平静</option><option>开心</option><option>难过</option><option>生气</option>
+  </select>
+  <button class="primary" id="send">发送</button>
+  <button id="start">开始相处</button>
+  <button id="end">结束相处</button>
+  <button id="reset">清空演示数据</button>
+  <button id="head">重新检测机器人头</button>
+</footer>
+<script>
+const $=id=>document.getElementById(id);
+const FACES={
+  init:{eyes:'o',mouth:'M70 135 Q100 140 130 135'},
+  smile:{eyes:'o',mouth:'M65 128 Q100 160 135 128'},
+  sad:{eyes:'o',mouth:'M68 145 Q100 122 132 145',brow:true},
+  blink:{eyes:'-',mouth:'M70 135 Q100 142 130 135'},
+  kiss:{eyes:'o',mouth:'kiss'},
+  makeface:{eyes:'x',mouth:'M65 130 Q100 150 135 130'}
+};
+function face(expr){
+  const f=FACES[expr]||FACES.init, s='stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none"';
+  let eyes='';
+  for(const x of [70,130]){
+    if(f.eyes==='-') eyes+=`<path d="M${x-12} 88 H${x+12}" ${s}/>`;
+    else if(f.eyes==='x') eyes+= x===70?`<path d="M58 80 L82 96 M82 80 L58 96" ${s}/>`:`<circle cx="130" cy="88" r="10" fill="currentColor"/>`;
+    else eyes+=`<circle cx="${x}" cy="88" r="10" fill="currentColor"/>`;
+  }
+  const brow=f.brow?`<path d="M56 66 L84 74 M144 66 L116 74" ${s}/>`:'';
+  const mouth=f.mouth==='kiss'?`<circle cx="100" cy="138" r="9" ${s}/>`:`<path d="${f.mouth}" ${s}/>`;
+  const tongue=expr==='makeface'?`<path d="M92 140 Q100 158 108 140" fill="var(--warm)"/>`:'';
+  $('face').innerHTML=`<circle cx="100" cy="100" r="88" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="3"/><g style="color:var(--ink)">${eyes}${brow}${mouth}${tongue}</g>`;
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function post(p,b){try{return await (await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})})).json()}catch(e){return {error:String(e)}}}
+let lastChat='';
+async function tick(){
+  try{
+    const s=await (await fetch('/state')).json();
+    face(s.current.expression); $('emo').textContent='主人情绪：'+s.current.emotion; $('status').textContent=s.status;
+    $('lvl').style.width=Math.max(0,Math.min(100,(s.level+70)*1.6))+'%';
+    $('chips').innerHTML=[`对话 ${s.models.chat}`,`语音 ${s.models.tts}`,`识别 ${s.asr}`,`麦克风 ${s.mic}`,s.head,s.mute?'静音模式':''].filter(Boolean).map(x=>`<span class="chip">${esc(x)}</span>`).join('');
+    $('kv').innerHTML=`<span>相处</span><span>${s.session.active?'进行中（'+s.session.started+' 开始）':'未开始'}</span><span>轮数</span><span>${s.session.turns}</span><span>表情</span><span>${esc(s.current.expression)}</span>`;
+    $('notes').textContent=s.notes.slice(-12).join('\n');
+    const html=s.transcript.map(m=>{
+      const bot=m.role!=='主人';
+      const meta=bot?[m.emotion&&'判断主人：'+m.emotion,m.expression&&'表情 '+m.expression,m.llm_ms&&'想 '+m.llm_ms+'ms',m.tts_ms&&'合成 '+m.tts_ms+'ms',m.via,m.error].filter(Boolean).join(' · ')
+                    :[m.via,m.tone&&'语气 '+m.tone,m.asr_ms&&'识别 '+m.asr_ms+'ms'].filter(Boolean).join(' · ');
+      return `<div class="msg ${bot?'bot':'user'}"><div class="who">${esc(m.role)} ${esc(m.time)}</div><div class="bubble">${esc(m.text)}</div><div class="meta">${esc(meta)}</div></div>`;
+    }).join('');
+    if(html!==lastChat){$('chat').innerHTML=html;lastChat=html;const p=$('chat').parentElement;p.scrollTop=p.scrollHeight;}
+  }catch(e){$('status').textContent='大脑没有响应';}
+}
+async function memTick(){
+  try{
+    const m=await (await fetch('/memory')).json();
+    if(m.error){$('profile').textContent=m.error;return;}
+    const p=m.profile||{}, u=p.user||{};
+    const li=a=>(a||[]).map(x=>`<li>${esc(x.text)}${x.status?'（'+esc(x.status)+'）':''}</li>`).join('')||'<li style="color:var(--muted)">还没有</li>';
+    $('profile').innerHTML=`<b>约定</b><ul>${li(p.promises)}</ul><b>主人的喜好</b><ul>${li(u.likes)}</ul><b>关于主人</b><ul>${li(u.facts)}</ul>${p.relationship?'<b>关系</b><p style="font-size:13.5px;margin:4px 0 12px">'+esc(p.relationship)+'</p>':''}`;
+    $('events').innerHTML=(m.events||[]).slice().reverse().map(e=>`<div class="ev ${e.source}"><span class="tag ${e.source}">${e.source==='story'?'故事':'机器人'}</span>${esc(e.summary)}<div class="meta">${esc(e.time.slice(11,19))} · ${esc(e.type)}${e.emotion&&e.emotion.label?' · 情绪 '+esc(e.emotion.label):''}</div></div>`).join('')||'<p style="color:var(--muted)">还没有事件</p>';
+  }catch(e){}
+}
+function send(){const t=$('text').value.trim(); if(!t)return; post('/say',{text:t,tone:$('tone').value}); $('text').value='';}
+$('send').onclick=send; $('text').addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+$('start').onclick=()=>post('/session/start'); $('end').onclick=()=>post('/session/end');
+$('reset').onclick=()=>{ if($('reset').dataset.armed){post('/reset');$('reset').textContent='清空演示数据';delete $('reset').dataset.armed;} else {$('reset').dataset.armed=1;$('reset').textContent='再点一次确认清空';setTimeout(()=>{delete $('reset').dataset.armed;$('reset').textContent='清空演示数据';},3000);} };
+$('head').onclick=()=>post('/head/recheck');
+face('init'); tick(); memTick(); setInterval(tick,700); setInterval(memTick,2000);
+</script>
+</body>
+</html>
