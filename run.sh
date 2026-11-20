@@ -18,5 +18,5 @@ MEM=$!
 trap 'kill $MEM 2>/dev/null' EXIT
 sleep 1
 echo "打开演示控制台：http://127.0.0.1:${CONSOLE_PORT:-8910}"
-(sleep 3; open "http://127.0.0.1:${CONSOLE_PORT:-8910}" 2>/dev/null || true) &
+[ "${NO_OPEN:-0}" = "1" ] || (sleep 3; open "http://127.0.0.1:${CONSOLE_PORT:-8910}" 2>/dev/null || true) &
 cd brain && "$PY" brain.py
