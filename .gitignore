@@ -1,0 +1,6 @@
+*.env
+.env*
+.keys.env
+__pycache__/
+.DS_Store
+memory_data/
