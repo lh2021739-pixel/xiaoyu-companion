@@ -6,3 +6,4 @@ funasr
 torch
 torchaudio
 modelscope
+scipy        # 机器人麦克风收音时重采样（44100Hz → 16000Hz）

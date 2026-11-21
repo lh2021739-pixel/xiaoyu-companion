@@ -11,7 +11,7 @@ from pathlib import Path
 
 import requests
 
-NP = {"http": None, "https": None}
+NP = {"http": None, "https": None, "all": None}
 M, B = "http://127.0.0.1:8900", "http://127.0.0.1:8910"
 VOICE = "Grandma (中文（中国大陆）)"   # Flo 音色太机械，识别率低，换成 Grandma
 LINES = ["我回来了。", "我好想你。", "今天工作好累。", "晚安。"]

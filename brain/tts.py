@@ -36,14 +36,23 @@ PROVIDERS = {"dashscope": (_dashscope, "百炼"), "stepfun": (_stepfun, "阶跃"
 
 
 def synthesize(text: str, voice_cfg: dict | None = None) -> dict:
-    """返回 {wav, provider, ms}。voice_cfg 来自角色资料，可为空。"""
+    """返回 {wav, provider, ms}。voice_cfg 来自角色资料，可为空。
+    格式：{"provider": "dashscope", "voice": "Chelsie", "backup": {"provider": "stepfun", "voice": "jingdiannvsheng"}}
+    主音色失败时，先用 backup 指定的备用音色；没写 backup 就用另一家的默认音色。"""
     t0 = time.time()
-    first = (voice_cfg or {}).get("provider") or TTS_PROVIDER
+    cfg = voice_cfg or {}
+    first = cfg.get("provider") or TTS_PROVIDER
+    backup = cfg.get("backup") if isinstance(cfg.get("backup"), dict) else {}
     order = [first] + [p for p in PROVIDERS if p != first]
     errors = []
     for name in order:
         fn, label = PROVIDERS.get(name, PROVIDERS["dashscope"])
-        voice = (voice_cfg or {}).get("voice") if name == first else None
+        if name == first:
+            voice = cfg.get("voice")
+        elif backup.get("provider") == name:
+            voice = backup.get("voice")
+        else:
+            voice = None
         try:
             return {"wav": fn(text, voice), "provider": label, "ms": int((time.time() - t0) * 1000)}
         except Exception as e:  # noqa: BLE001

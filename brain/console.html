@@ -23,7 +23,27 @@ main{display:grid;grid-template-columns:300px minmax(0,1fr) 360px;gap:16px;paddi
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:auto;min-width:0}
 .panel h2{font-size:14px;margin:0 0 10px;color:var(--muted);font-weight:600;letter-spacing:.04em}
 .face{display:flex;flex-direction:column;align-items:center;gap:10px}
-.face svg{width:200px;height:200px}
+.face svg{width:200px;height:200px;flex:none}
+/* 角色照片：圆形取景（只露出脸和头发），外圈颜色跟着表情变，说话时轻轻呼吸 */
+.portrait{--ring:var(--accent);position:relative;flex:none;width:216px;height:216px;border-radius:50%;padding:5px;
+  background:var(--ring);box-shadow:0 10px 30px -12px var(--ring);transition:background .5s,box-shadow .5s;margin:4px 0 6px}
+.portrait .photo{width:100%;height:100%;border-radius:50%;border:4px solid var(--panel);
+  background:#e9edf2 center/160% no-repeat;background-position:52% 26%}
+.portrait.speaking::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:3px solid var(--ring);
+  opacity:.5;animation:breathe 1.6s ease-in-out infinite}
+@keyframes breathe{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(1.06);opacity:0}}
+@media (prefers-reduced-motion: reduce){.portrait.speaking::after{animation:none}}
+.portrait[data-expr="sad"]{--ring:#7c8fa6}
+.portrait[data-expr="smile"],.portrait[data-expr="kiss"]{--ring:var(--warm)}
+.portrait[data-expr="makeface"]{--ring:var(--story)}
+.portrait[hidden],.face svg[hidden]{display:none}
+.acts{width:100%;margin-top:14px}
+.acts h3{font-size:13px;color:var(--muted);font-weight:600;margin:0 0 6px}
+.actgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.actgrid button{font:inherit;font-size:13px;padding:7px 4px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.actgrid button:hover{border-color:var(--accent);color:var(--accent)}
+.actgrid button.sent{background:var(--accent-soft);border-color:var(--accent)}
+.actgrid button.fail{border-color:var(--warm);color:var(--warm)}
 .emo{font-size:22px;font-weight:800}
 .status{font-size:14px;color:var(--muted)}
 .meter{width:100%;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
@@ -68,10 +88,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 <main>
   <section class="panel face">
     <h2 style="align-self:flex-start" id="facetitle">角色现在</h2>
+    <div class="portrait" id="portrait" hidden><div class="photo" id="photo" role="img" aria-label="角色照片"></div></div>
     <svg id="face" viewBox="0 0 200 200" role="img" aria-label="角色的表情"></svg>
     <div class="emo" id="emo">平静</div>
     <div class="status" id="status">等待</div>
     <div class="meter" title="麦克风音量"><i id="lvl"></i></div>
+    <div class="acts"><h3>让她做个动作</h3><div class="actgrid" id="acts"></div></div>
     <div class="kv" id="kv"></div>
     <div class="notes" id="notes"></div>
   </section>
@@ -129,6 +151,7 @@ async function tick(){
   try{
     const s=await (await fetch('/state')).json();
     face(s.current.expression); $('emo').textContent='他的情绪：'+s.current.emotion; $('status').textContent=s.status;
+    $('portrait').dataset.expr=s.current.expression; $('portrait').classList.toggle('speaking',s.status==='说话中');
     $('lvl').style.width=Math.max(0,Math.min(100,(s.level+70)*1.6))+'%';
     $('chips').innerHTML=[`对话 ${s.models.chat}`,`语音 ${s.models.tts}`,`识别 ${s.asr}`,`麦克风 ${s.mic}`,s.head,s.mute?'静音模式':''].filter(Boolean).map(x=>`<span class="chip">${esc(x)}</span>`).join('');
     $('kv').innerHTML=`<span>相处</span><span>${s.session.active?'进行中（'+s.session.started+' 开始）':'未开始'}</span><span>轮数</span><span>${s.session.turns}</span><span>表情</span><span>${esc(s.current.expression)}</span>`;
@@ -149,11 +172,21 @@ async function memTick(){
     const c=m.character, p=m.profile||{};
     if(!c){$('card').innerHTML='还没有导入角色。用 tools/import_character.py 导入，或由故事平台一键导出。';$('profile').innerHTML='';$('events').innerHTML='';return;}
     $('title').textContent=`演示控制台 · ${c.name}`; $('facetitle').textContent=`${c.name}现在`;
+    showAvatar(c.id);
     $('card').innerHTML=`<b>${esc(c.name)}</b>${c.call_user?' · 叫他「'+esc(c.call_user)+'」':''}<p>${esc(c.background)}</p><p>性格：${esc(c.personality)}</p><p>结局：${esc(c.ending)}</p>`;
     const li=a=>(a||[]).map(x=>`<li>${esc(x.text)}${x.status?'（'+esc(x.status)+'）':''}</li>`).join('')||'<li style="color:var(--muted)">还没有</li>';
     $('profile').innerHTML=`<b>约定</b><ul>${li(p.promises)}</ul><b>他的喜好</b><ul>${li(p.likes)}</ul><b>关于他</b><ul>${li(p.facts)}</ul>${p.relationship_now?'<b>现在</b><p style="font-size:13.5px;margin:4px 0 12px">'+esc(p.relationship_now)+'</p>':''}`;
     $('events').innerHTML=(m.events||[]).slice().reverse().map(e=>`<div class="ev ${e.source}"><span class="tag ${e.source}">${e.source==='story'?'故事里的经历':'和机器人聊的'}</span>${esc(e.summary)}<div class="meta">${e.source==='robot'?esc((e.time||'').slice(11,19))+' · '+esc(e.type):'导入'}${e.emotion&&e.emotion.label?' · 情绪 '+esc(e.emotion.label):''}</div></div>`).join('')||'<p style="color:var(--muted)">还没有记忆</p>';
   }catch(e){}
+}
+// 有照片就显示照片，没有就显示表情脸
+let avatarFor=null;
+function showAvatar(id){
+  if(id===avatarFor)return; avatarFor=id;
+  const url='/avatar/'+encodeURIComponent(id||''), img=new Image();
+  img.onload=()=>{ if(avatarFor!==id)return; $('photo').style.backgroundImage=`url("${url}")`; $('portrait').hidden=false; $('face').style.display='none'; };
+  img.onerror=()=>{ if(avatarFor!==id)return; $('portrait').hidden=true; $('face').style.display=''; };
+  img.src=url;
 }
 let charsSig='';
 async function charsTick(){
@@ -169,6 +202,11 @@ $('send').onclick=send; $('text').addEventListener('keydown',e=>{if(e.key==='Ent
 $('start').onclick=()=>post('/session/start'); $('end').onclick=()=>post('/session/end');
 $('reset').onclick=()=>{ if($('reset').dataset.armed){post('/reset');$('reset').textContent='清空演示数据';delete $('reset').dataset.armed;} else {$('reset').dataset.armed=1;$('reset').textContent='再点一次确认清空';setTimeout(()=>{delete $('reset').dataset.armed;$('reset').textContent='清空演示数据';},3000);} };
 $('head').onclick=()=>post('/head/recheck');
+const ACTS=[['smile','微笑'],['sad','难过'],['makeface','鬼脸'],['kiss','亲亲'],['blink','眨眼'],['eyes_rotate','转眼睛'],['blink_left','眨左眼'],['blink_right','眨右眼'],['turn_neck','转头'],['init','复位']];
+$('acts').innerHTML=ACTS.map(([a,n])=>`<button data-a="${a}">${n}</button>`).join('');
+$('acts').onclick=async e=>{const b=e.target.closest('button'); if(!b)return;
+  const r=await post('/head/action',{action:b.dataset.a}); b.classList.add(r.ok?'sent':'fail'); b.title=r.result||r.error||'';
+  setTimeout(()=>b.classList.remove('sent','fail'),1200); tick();};
 $('switch').onclick=async()=>{const id=$('chars').value; if(id){await post('/character/activate',{character_id:id}); charsSig=''; charsTick(); memTick();}};
 face('init'); tick(); memTick(); charsTick(); setInterval(tick,700); setInterval(memTick,2000); setInterval(charsTick,4000);
 </script>

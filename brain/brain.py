@@ -22,8 +22,13 @@ from llm import chat_turn
 from output import Speaker, duration
 from tts import synthesize
 
-NO_PROXY = {"http": None, "https": None}
+NO_PROXY = {"http": None, "https": None, "all": None}   # 本机请求不走任何代理（包括 all_proxy 里的 SOCKS 代理）
 CONSOLE_HTML = Path(__file__).with_name("console.html")
+AVATAR_DIR = Path(__file__).with_name("avatars")
+# 控制台可以手动触发的头部动作（名字 → 按钮上的中文）
+HEAD_ACTIONS = {"smile": "微笑", "sad": "难过", "makeface": "鬼脸", "kiss": "亲亲", "blink": "眨眼",
+                "blink_left": "眨左眼", "blink_right": "眨右眼", "eyes_rotate": "转眼睛", "turn_neck": "转头", "init": "复位"}
+FACE_EXPRESSIONS = {"smile", "sad", "makeface", "kiss", "blink", "init"}   # 这些同时更新控制台上的表情
 
 
 def mem_get(path: str, **params):
@@ -159,15 +164,26 @@ class Brain:
                 hint = ""
                 if self.session.pop("first_turn", False) and self.session.get("character"):
                     shared = [l[2:] for l in self.session["memory_text"].split("【后来")[0].splitlines() if l.startswith("- ")]
-                    if shared:
-                        hint = ("（提示：这是你们这次相处的第一句。先接住他，回复里必须自然地提到一件你们共同经历过的具体小事，"
-                                f"比如：{random.choice(shared)}）")
+                    warm = [s for s in shared if not any(w in s for w in C.SAD_EVENT_WORDS)] or shared   # 开场挑温暖的
+                    if warm:
+                        hint = ("（提示：这是你们这次相处的第一句。先接住他，回复里自然地提到一件你们共同经历过的具体小事，"
+                                "只用记忆里写到的细节，不要自己添加情节、动作或原话；记忆里的'你'是你自己、'他'是他，"
+                                "说出口时要换成你对他说话的口吻，不要照着念。"
+                                f"比如这件：{random.choice(warm)}）")
+                if any(w in text for w in C.CRISIS_WORDS):
+                    hint = C.CRISIS_HINT
+                    self.note("听到轻生相关的话：已要求她劝他找家人朋友和专业帮助")
                 out = chat_turn(self.session["persona_text"], self.session["memory_text"], self.session["history"],
                                 text, tone_cn, hint)
             except Exception as e:  # noqa: BLE001
                 self.note(f"对话模型出错：{e}")
                 out = {"emotion": "平静", "expression": "init", "reply": "抱歉，我刚刚走神了，你能再说一次吗？",
                        "remember": [], "end_session": False, "ms": 0}
+            if any(w in text for w in C.CRISIS_WORDS):
+                # 兜底：她的回答里没劝他求助，就补上固定的一句（模型只靠提示做不到每次都说）
+                if not any(w in out["reply"] for w in ("家人", "朋友", "热线", "医生", "医院")):
+                    out["reply"] = out["reply"].rstrip("。！？!?.…") + "。" + C.CRISIS_LINE
+                out["emotion"], out["expression"], out["end_session"] = "难过", "sad", False
             self.session["history"] += [{"role": "user", "content": text},
                                         {"role": "assistant", "content": out["reply"]}]
             self.session["turns"] += 1
@@ -204,7 +220,7 @@ class Brain:
         finally:
             if self.mic:
                 time.sleep(0.3)
-                self.mic.muted.clear()
+                self.mic.unmute()
 
     # ── 状态（给控制台）──
     def state(self) -> dict:
@@ -212,7 +228,7 @@ class Brain:
                 "session": {k: v for k, v in self.session.items() if k != "history"},
                 "transcript": self.transcript, "notes": self.notes,
                 "asr": "已就绪" if self.asr.model else (self.asr.error or "加载中"),
-                "mic": ("已开启" if self.mic and not self.mic.error else (self.mic.error if self.mic else "未开启（MIC=0）")),
+                "mic": (f"已开启（{self.mic.label()}）" if self.mic and not self.mic.error else (self.mic.error if self.mic else "未开启（MIC=0）")),
                 "head": self.speaker.head_note, "mute": C.MUTE,
                 "character": {k: (self.session.get("character") or {}).get(k) for k in ("id", "name")},
                 "models": {"chat": C.CHAT_MODEL, "tts": self._tts_label()}}
@@ -257,6 +273,14 @@ def make_handler(brain: Brain):
                 return self._send(200, CONSOLE_HTML.read_bytes(), "text/html; charset=utf-8")
             if self.path == "/state":
                 return self._send(200, brain.state())
+            if self.path.startswith("/avatar/"):
+                # 角色照片：brain/avatars/<角色id>.jpg|png|webp，没有就 404（控制台改显示表情脸）
+                cid = "".join(ch for ch in self.path[len("/avatar/"):].split("?")[0] if ch.isalnum() or ch in "_-")
+                for ext, mime in ((".jpg", "image/jpeg"), (".png", "image/png"), (".webp", "image/webp")):
+                    f = AVATAR_DIR / f"{cid}{ext}"
+                    if cid and f.exists():
+                        return self._send(200, f.read_bytes(), mime)
+                return self._send(404, {"error": "没有照片"})
             if self.path == "/characters":
                 try:
                     return self._send(200, mem_get("/characters"))
@@ -298,6 +322,16 @@ def make_handler(brain: Brain):
             if self.path == "/head/recheck":
                 brain.speaker.check_head()
                 return self._send(200, {"ok": True, "head": brain.speaker.head_note})
+            if self.path == "/head/action":
+                # 控制台手动让机器人做一个动作（只放行头部控制程序支持、且不需要参数的动作）
+                name = str(data.get("action") or "")
+                if name not in HEAD_ACTIONS:
+                    return self._send(400, {"error": f"不支持的动作：{name}"})
+                result = brain.speaker.expression(name)
+                if name in FACE_EXPRESSIONS:
+                    brain.current = {**brain.current, "expression": name}
+                brain.note(f"手动动作：{HEAD_ACTIONS[name]} · {result}")
+                return self._send(200, {"ok": result == "已发给机器人头", "result": result})
             self._send(404, {"error": "not found"})
 
         def log_message(self, *args):
@@ -313,8 +347,9 @@ def main() -> None:
     threading.Thread(target=brain.prepare_acks, args=(None,), daemon=True).start()
     if C.MIC:
         def level(db, speaking):
-            brain.level = db
-        brain.mic = MicListener(brain.on_audio, level)
+            brain.level = float(db)
+        brain.mic = MicListener(brain.on_audio, level, source=C.MIC_SOURCE,
+                                head_serial=C.HEAD_ADB_SERIAL, on_note=brain.note)
         brain.mic.start()
         brain.status = "在听" if not brain.mic.error else "等待"
         if brain.mic.error:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import requests
 
-NP = {"http": None, "https": None}
+NP = {"http": None, "https": None, "all": None}
 M, B = "http://127.0.0.1:8900", "http://127.0.0.1:8910"
 SAMPLES = Path(__file__).resolve().parent.parent / "tools" / "sample_characters"
 WIFE_DETAILS = ("图书馆", "小王子", "热可可", "江边", "向日葵", "番茄牛腩", "洱海", "吃饭", "画", "求婚")

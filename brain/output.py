@@ -13,7 +13,7 @@ import requests
 
 from config import HEAD_URL, MUTE
 
-NO_PROXY = {"http": None, "https": None}
+NO_PROXY = {"http": None, "https": None, "all": None}   # 本机请求不走任何代理（包括 all_proxy 里的 SOCKS 代理）
 
 
 def wav_info(wav: bytes) -> tuple[np.ndarray, int]:
