@@ -54,7 +54,7 @@ CONSOLE_PORT = int(env("CONSOLE_PORT", "8910"))
 # 开关
 MIC = env("MIC", "1") == "1"                         # 0 = 不开麦克风（只用控制台打字）
 MIC_SOURCE = env("MIC_SOURCE", "mac")                # mac = Mac 麦克风；head = 机器人头自己的麦克风
-HEAD_ADB_SERIAL = env("HEAD_ADB_SERIAL", "")          # 机器人头的 adb 地址，例如 172.20.10.5:5555（MIC_SOURCE=head 时必填）
+HEAD_ADB_SERIAL = env("HEAD_ADB_SERIAL", "")          # 机器人头的 adb 地址，格式 <头部IP>:5555（MIC_SOURCE=head 时必填）
 MUTE = env("MUTE", "0") == "1"                       # 1 = 不出声（测试用）
 ACK = env("ACK", "1") == "1"                         # 1 = 听完先应一声"嗯"，填补等待
 END_WORDS = ("晚安", "拜拜", "再见", "我先睡了", "下次聊")
