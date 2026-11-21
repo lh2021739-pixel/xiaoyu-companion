@@ -37,10 +37,10 @@ CHAT_URL = env("CHAT_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/ch
 CHAT_MODEL = env("CHAT_MODEL", "qwen-flash")   # 实测 qwen-flash 约 0.7 秒、qwen-plus 约 1.5 秒，效果相当
 CHAT_KEY = env("CHAT_API_KEY", DASHSCOPE_KEY)
 
-# 语音合成：默认阶跃 stepaudio-2.5-tts，失败自动换百炼 qwen3-tts-flash
-TTS_PROVIDER = env("TTS_PROVIDER", "stepfun")
-TTS_VOICE = env("TTS_VOICE", "wenrounvsheng")
-TTS_FALLBACK_VOICE = env("TTS_FALLBACK_VOICE", "Cherry")
+# 语音合成：默认百炼 qwen3-tts-flash（约 1 秒，比阶跃快一倍），失败自动换阶跃
+TTS_PROVIDER = env("TTS_PROVIDER", "dashscope")
+TTS_DASHSCOPE_VOICE = env("TTS_DASHSCOPE_VOICE", "Cherry")
+TTS_STEPFUN_VOICE = env("TTS_STEPFUN_VOICE", "wenrounvsheng")
 
 # 本地语音识别
 SENSEVOICE_DIR = env("SENSEVOICE_DIR", str(Path.home() / ".cache/modelscope/models/iic--SenseVoiceSmall/snapshots/master"))
@@ -55,6 +55,5 @@ CONSOLE_PORT = int(env("CONSOLE_PORT", "8910"))
 MIC = env("MIC", "1") == "1"                         # 0 = 不开麦克风（只用控制台打字）
 MUTE = env("MUTE", "0") == "1"                       # 1 = 不出声（测试用）
 ACK = env("ACK", "1") == "1"                         # 1 = 听完先应一声"嗯"，填补等待
-CHARACTER = env("CHARACTER_NAME", "小屿")
 END_WORDS = ("晚安", "拜拜", "再见", "我先睡了", "下次聊")
 SESSION_IDLE_SECONDS = int(env("SESSION_IDLE_SECONDS", "180"))

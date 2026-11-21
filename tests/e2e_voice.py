@@ -1,7 +1,8 @@
-"""端到端自测（语音模式，不开麦克风）：用 macOS 自带中文语音合成"主人说的话"，当成麦克风听到的声音喂给大脑。
-检查：本地识别是否正确 → 回复 → 记忆本。前提：记忆本（8900）和大脑（8910）已启动。
+"""端到端自测（语音模式，不开麦克风）：用 macOS 自带中文语音合成"他说的话"，当成麦克风听到的声音喂给大脑。
+检查：本地识别是否正确 → 以当前角色回复 → 写回记忆库。会重新导入测试亡妻。前提：记忆本（8900）和大脑（8910）已启动。
 用法：python3 tests/e2e_voice.py
 """
+import json
 import subprocess
 import sys
 import tempfile
@@ -13,7 +14,7 @@ import requests
 NP = {"http": None, "https": None}
 M, B = "http://127.0.0.1:8900", "http://127.0.0.1:8910"
 VOICE = "Grandma (中文（中国大陆）)"   # Flo 音色太机械，识别率低，换成 Grandma
-LINES = ["我回来了。", "今天被老板当着大家的面骂了，好累。", "晚安。"]
+LINES = ["我回来了。", "我好想你。", "今天工作好累。", "晚安。"]
 
 
 def make_wav(text: str, out: Path) -> None:
@@ -35,9 +36,9 @@ def hear(path: Path, timeout=60):
 
 
 def main():
+    data = json.load(open(Path(__file__).resolve().parent.parent / "tools/sample_characters/wife_test.json", encoding="utf-8"))
+    requests.post(f"{M}/characters/import", json=data, proxies=NP)
     requests.post(f"{B}/reset", proxies=NP)
-    requests.post(f"{M}/events", proxies=NP, json={"source": "story", "type": "choice", "importance": 2,
-                                                   "summary": "在故事里，主人答应了周末陪小屿去看海。"})
     ok = 0
     with tempfile.TemporaryDirectory() as d:
         for i, line in enumerate(LINES):
@@ -47,7 +48,7 @@ def main():
             same = user["text"].strip("。") == line.strip("。")
             ok += same
             print(f"说：{line}\n  识别：{user['text']}（{'对' if same else '不一致'}，语气 {user.get('tone')}，{user.get('asr_ms')}ms）"
-                  f"\n  小屿：{bot['text']}（{bot.get('emotion')} / {bot.get('expression')}，想 {bot.get('llm_ms')}ms，合成 {bot.get('tts_ms')}ms）")
+                  f"\n  {bot['role']}：{bot['text']}（{bot.get('emotion')} / {bot.get('expression')}，想 {bot.get('llm_ms')}ms，合成 {bot.get('tts_ms')}ms）")
     ev = requests.get(f"{M}/all", proxies=NP).json()["events"]
     print("记忆本：", " / ".join(f"[{e['source']}] {e['summary']}" for e in ev))
     print(f"识别正确 {ok}/{len(LINES)}")

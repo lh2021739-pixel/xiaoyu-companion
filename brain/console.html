@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>小屿 · 演示控制台</title>
+<title>记忆陪伴 · 演示控制台</title>
 <style>
 :root{
   --bg:#f3f4f1; --panel:#ffffff; --ink:#1e2320; --muted:#66706a; --line:#dde1dc;
@@ -43,6 +43,12 @@ main{display:grid;grid-template-columns:300px minmax(0,1fr) 360px;gap:16px;paddi
 .tag{font-size:11px;padding:0 6px;border-radius:6px;margin-right:6px}
 .tag.robot{background:var(--accent-soft);color:var(--accent)}
 .tag.story{background:var(--story-soft);color:var(--story)}
+.charbar{display:flex;gap:8px;margin-bottom:10px}
+.charbar select,.charbar button{font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.charbar select{flex:1;min-width:0}
+.card{font-size:13.5px;background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.card b{font-size:16px}
+.card p{margin:4px 0;color:var(--muted)}
 .prof li{font-size:13.5px;margin-bottom:4px}
 .prof ul{margin:4px 0 12px;padding-left:18px}
 footer{display:flex;gap:10px;padding:0 20px 16px;flex-wrap:wrap;align-items:center}
@@ -56,13 +62,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 </head>
 <body>
 <header>
-  <h1>小屿 · 演示控制台</h1>
+  <h1 id="title">演示控制台</h1>
   <div class="chips" id="chips"></div>
 </header>
 <main>
   <section class="panel face">
-    <h2 style="align-self:flex-start">小屿现在</h2>
-    <svg id="face" viewBox="0 0 200 200" role="img" aria-label="小屿的表情"></svg>
+    <h2 style="align-self:flex-start" id="facetitle">角色现在</h2>
+    <svg id="face" viewBox="0 0 200 200" role="img" aria-label="角色的表情"></svg>
     <div class="emo" id="emo">平静</div>
     <div class="status" id="status">等待</div>
     <div class="meter" title="麦克风音量"><i id="lvl"></i></div>
@@ -74,9 +80,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <div id="chat"></div>
   </section>
   <section class="panel">
-    <h2>记忆本（故事和机器人共用）</h2>
+    <h2>当前角色与记忆</h2>
+    <div class="charbar"><select id="chars" aria-label="选择角色"></select><button id="switch">切换为当前角色</button></div>
+    <div id="card" class="card"></div>
     <div class="prof" id="profile"></div>
-    <h2>事件</h2>
+    <h2>记忆条目</h2>
     <div id="events"></div>
   </section>
 </main>
@@ -88,7 +96,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
   <button class="primary" id="send">发送</button>
   <button id="start">开始相处</button>
   <button id="end">结束相处</button>
-  <button id="reset">清空演示数据</button>
+  <button id="reset">清空聊天记忆</button>
   <button id="head">重新检测机器人头</button>
 </footer>
 <script>
@@ -120,14 +128,14 @@ let lastChat='';
 async function tick(){
   try{
     const s=await (await fetch('/state')).json();
-    face(s.current.expression); $('emo').textContent='主人情绪：'+s.current.emotion; $('status').textContent=s.status;
+    face(s.current.expression); $('emo').textContent='他的情绪：'+s.current.emotion; $('status').textContent=s.status;
     $('lvl').style.width=Math.max(0,Math.min(100,(s.level+70)*1.6))+'%';
     $('chips').innerHTML=[`对话 ${s.models.chat}`,`语音 ${s.models.tts}`,`识别 ${s.asr}`,`麦克风 ${s.mic}`,s.head,s.mute?'静音模式':''].filter(Boolean).map(x=>`<span class="chip">${esc(x)}</span>`).join('');
     $('kv').innerHTML=`<span>相处</span><span>${s.session.active?'进行中（'+s.session.started+' 开始）':'未开始'}</span><span>轮数</span><span>${s.session.turns}</span><span>表情</span><span>${esc(s.current.expression)}</span>`;
     $('notes').textContent=s.notes.slice(-12).join('\n');
     const html=s.transcript.map(m=>{
-      const bot=m.role!=='主人';
-      const meta=bot?[m.emotion&&'判断主人：'+m.emotion,m.expression&&'表情 '+m.expression,m.llm_ms&&'想 '+m.llm_ms+'ms',m.tts_ms&&'合成 '+m.tts_ms+'ms',m.via,m.error].filter(Boolean).join(' · ')
+      const bot=m.role!=='你';
+      const meta=bot?[m.emotion&&'判断他：'+m.emotion,m.expression&&'表情 '+m.expression,m.llm_ms&&'想 '+m.llm_ms+'ms',m.tts_ms&&'合成 '+m.tts_ms+'ms',m.via,m.error].filter(Boolean).join(' · ')
                     :[m.via,m.tone&&'语气 '+m.tone,m.asr_ms&&'识别 '+m.asr_ms+'ms'].filter(Boolean).join(' · ');
       return `<div class="msg ${bot?'bot':'user'}"><div class="who">${esc(m.role)} ${esc(m.time)}</div><div class="bubble">${esc(m.text)}</div><div class="meta">${esc(meta)}</div></div>`;
     }).join('');
@@ -137,11 +145,23 @@ async function tick(){
 async function memTick(){
   try{
     const m=await (await fetch('/memory')).json();
-    if(m.error){$('profile').textContent=m.error;return;}
-    const p=m.profile||{}, u=p.user||{};
+    if(m.error){$('card').textContent=m.error;return;}
+    const c=m.character, p=m.profile||{};
+    if(!c){$('card').innerHTML='还没有导入角色。用 tools/import_character.py 导入，或由故事平台一键导出。';$('profile').innerHTML='';$('events').innerHTML='';return;}
+    $('title').textContent=`演示控制台 · ${c.name}`; $('facetitle').textContent=`${c.name}现在`;
+    $('card').innerHTML=`<b>${esc(c.name)}</b>${c.call_user?' · 叫他「'+esc(c.call_user)+'」':''}<p>${esc(c.background)}</p><p>性格：${esc(c.personality)}</p><p>结局：${esc(c.ending)}</p>`;
     const li=a=>(a||[]).map(x=>`<li>${esc(x.text)}${x.status?'（'+esc(x.status)+'）':''}</li>`).join('')||'<li style="color:var(--muted)">还没有</li>';
-    $('profile').innerHTML=`<b>约定</b><ul>${li(p.promises)}</ul><b>主人的喜好</b><ul>${li(u.likes)}</ul><b>关于主人</b><ul>${li(u.facts)}</ul>${p.relationship?'<b>关系</b><p style="font-size:13.5px;margin:4px 0 12px">'+esc(p.relationship)+'</p>':''}`;
-    $('events').innerHTML=(m.events||[]).slice().reverse().map(e=>`<div class="ev ${e.source}"><span class="tag ${e.source}">${e.source==='story'?'故事':'机器人'}</span>${esc(e.summary)}<div class="meta">${esc(e.time.slice(11,19))} · ${esc(e.type)}${e.emotion&&e.emotion.label?' · 情绪 '+esc(e.emotion.label):''}</div></div>`).join('')||'<p style="color:var(--muted)">还没有事件</p>';
+    $('profile').innerHTML=`<b>约定</b><ul>${li(p.promises)}</ul><b>他的喜好</b><ul>${li(p.likes)}</ul><b>关于他</b><ul>${li(p.facts)}</ul>${p.relationship_now?'<b>现在</b><p style="font-size:13.5px;margin:4px 0 12px">'+esc(p.relationship_now)+'</p>':''}`;
+    $('events').innerHTML=(m.events||[]).slice().reverse().map(e=>`<div class="ev ${e.source}"><span class="tag ${e.source}">${e.source==='story'?'故事里的经历':'和机器人聊的'}</span>${esc(e.summary)}<div class="meta">${e.source==='robot'?esc((e.time||'').slice(11,19))+' · '+esc(e.type):'导入'}${e.emotion&&e.emotion.label?' · 情绪 '+esc(e.emotion.label):''}</div></div>`).join('')||'<p style="color:var(--muted)">还没有记忆</p>';
+  }catch(e){}
+}
+let charsSig='';
+async function charsTick(){
+  try{
+    const r=await (await fetch('/characters')).json();
+    const sig=JSON.stringify(r.characters);
+    if(sig===charsSig)return; charsSig=sig;
+    $('chars').innerHTML=(r.characters||[]).map(c=>`<option value="${esc(c.id)}"${c.active?' selected':''}>${esc(c.name)}${c.active?'（当前）':''} · ${c.events} 条</option>`).join('')||'<option>还没有角色</option>';
   }catch(e){}
 }
 function send(){const t=$('text').value.trim(); if(!t)return; post('/say',{text:t,tone:$('tone').value}); $('text').value='';}
@@ -149,7 +169,8 @@ $('send').onclick=send; $('text').addEventListener('keydown',e=>{if(e.key==='Ent
 $('start').onclick=()=>post('/session/start'); $('end').onclick=()=>post('/session/end');
 $('reset').onclick=()=>{ if($('reset').dataset.armed){post('/reset');$('reset').textContent='清空演示数据';delete $('reset').dataset.armed;} else {$('reset').dataset.armed=1;$('reset').textContent='再点一次确认清空';setTimeout(()=>{delete $('reset').dataset.armed;$('reset').textContent='清空演示数据';},3000);} };
 $('head').onclick=()=>post('/head/recheck');
-face('init'); tick(); memTick(); setInterval(tick,700); setInterval(memTick,2000);
+$('switch').onclick=async()=>{const id=$('chars').value; if(id){await post('/character/activate',{character_id:id}); charsSig=''; charsTick(); memTick();}};
+face('init'); tick(); memTick(); charsTick(); setInterval(tick,700); setInterval(memTick,2000); setInterval(charsTick,4000);
 </script>
 </body>
 </html>

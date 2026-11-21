@@ -1,40 +1,51 @@
-"""语音合成：默认阶跃 stepaudio-2.5-tts（套餐地址），失败自动换百炼 qwen3-tts-flash。返回 wav 字节。"""
+"""语音合成：默认百炼 qwen3-tts-flash（更快），失败自动换阶跃 stepaudio-2.5-tts。返回 wav 字节。
+角色资料里可以带 voice：{"provider": "dashscope" 或 "stepfun", "voice": "音色名"}，优先用它。"""
 from __future__ import annotations
 
 import time
 
 import requests
 
-from config import DASHSCOPE_KEY, STEPFUN_BASE, STEPFUN_KEY, TTS_FALLBACK_VOICE, TTS_PROVIDER, TTS_VOICE
+HTTP = requests.Session()
+HTTP.trust_env = False   # 国内接口直连，不读本机的代理设置（代理会让下载音频变慢，SOCKS 代理还会直接报错）
+
+from config import DASHSCOPE_KEY, STEPFUN_BASE, STEPFUN_KEY, TTS_DASHSCOPE_VOICE, TTS_PROVIDER, TTS_STEPFUN_VOICE
 
 
-def _stepfun(text: str) -> bytes:
-    r = requests.post(f"{STEPFUN_BASE}/audio/speech", timeout=30,
+def _stepfun(text: str, voice: str | None) -> bytes:
+    r = HTTP.post(f"{STEPFUN_BASE}/audio/speech", timeout=(5, 12),
                       headers={"Authorization": f"Bearer {STEPFUN_KEY}"},
-                      json={"model": "stepaudio-2.5-tts", "input": text, "voice": TTS_VOICE, "response_format": "wav"})
+                      json={"model": "stepaudio-2.5-tts", "input": text, "voice": voice or TTS_STEPFUN_VOICE,
+                            "response_format": "wav"})
     if r.status_code != 200 or not r.content.startswith(b"RIFF"):
         raise RuntimeError(f"阶跃语音合成失败 {r.status_code}: {r.text[:120]}")
     return r.content
 
 
-def _dashscope(text: str) -> bytes:
-    r = requests.post("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", timeout=30,
+def _dashscope(text: str, voice: str | None) -> bytes:
+    r = HTTP.post("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", timeout=(5, 8),
                       headers={"Authorization": f"Bearer {DASHSCOPE_KEY}"},
-                      json={"model": "qwen3-tts-flash", "input": {"text": text, "voice": TTS_FALLBACK_VOICE, "language_type": "Chinese"}})
+                      json={"model": "qwen3-tts-flash",
+                            "input": {"text": text, "voice": voice or TTS_DASHSCOPE_VOICE, "language_type": "Chinese"}})
     r.raise_for_status()
     url = r.json()["output"]["audio"]["url"]
-    return requests.get(url, timeout=30).content
+    return HTTP.get(url, timeout=(5, 8)).content   # 卡住就让位给阶跃，不让对话干等
 
 
-def synthesize(text: str) -> dict:
-    """返回 {wav, provider, ms}。"""
+PROVIDERS = {"dashscope": (_dashscope, "百炼"), "stepfun": (_stepfun, "阶跃")}
+
+
+def synthesize(text: str, voice_cfg: dict | None = None) -> dict:
+    """返回 {wav, provider, ms}。voice_cfg 来自角色资料，可为空。"""
     t0 = time.time()
-    order = [_stepfun, _dashscope] if TTS_PROVIDER == "stepfun" else [_dashscope, _stepfun]
+    first = (voice_cfg or {}).get("provider") or TTS_PROVIDER
+    order = [first] + [p for p in PROVIDERS if p != first]
     errors = []
-    for fn in order:
+    for name in order:
+        fn, label = PROVIDERS.get(name, PROVIDERS["dashscope"])
+        voice = (voice_cfg or {}).get("voice") if name == first else None
         try:
-            wav = fn(text)
-            return {"wav": wav, "provider": "阶跃" if fn is _stepfun else "百炼", "ms": int((time.time() - t0) * 1000)}
+            return {"wav": fn(text, voice), "provider": label, "ms": int((time.time() - t0) * 1000)}
         except Exception as e:  # noqa: BLE001
             errors.append(str(e))
     raise RuntimeError("；".join(errors))

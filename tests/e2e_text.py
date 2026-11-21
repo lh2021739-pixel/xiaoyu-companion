@@ -1,14 +1,19 @@
-"""端到端自测（打字模式，不需要麦克风）：故事里的选择 → 机器人提起；对机器人说的事 → 记进记忆本 → 故事侧能取到。
-前提：记忆本（8900）和大脑（8910）已启动。用法：python3 tests/e2e_text.py
+"""端到端自测（打字模式，不需要麦克风）：
+导入角色 → 以角色身份带着记忆聊天 → 聊天写回记忆库 → 换角色（人设和记忆隔离）→ 换回来（记忆还在）。
+前提：记忆库（8900）和大脑（8910）已启动。用法：python3 tests/e2e_text.py
+注意：会清空记忆库里 demo 用户的全部数据，再导入两个测试角色。
 """
 import json
 import sys
 import time
+from pathlib import Path
 
 import requests
 
 NP = {"http": None, "https": None}
 M, B = "http://127.0.0.1:8900", "http://127.0.0.1:8910"
+SAMPLES = Path(__file__).resolve().parent.parent / "tools" / "sample_characters"
+WIFE_DETAILS = ("图书馆", "小王子", "热可可", "江边", "向日葵", "番茄牛腩", "洱海", "吃饭", "画", "求婚")
 
 
 def say(text, tone="平静", timeout=60):
@@ -28,47 +33,63 @@ def check(name, ok, detail=""):
     return ok
 
 
+def load(name, activate=True):
+    data = json.load(open(SAMPLES / name, encoding="utf-8"))
+    data["activate"] = activate
+    return requests.post(f"{M}/characters/import", json=data, proxies=NP).json()
+
+
+def ctx_text():
+    return requests.get(f"{M}/context", params={"for": "robot"}, proxies=NP).json()["memory_text"]
+
+
 def main():
-    results = []
+    r = []
+    requests.post(f"{M}/reset", params={"scope": "all"}, proxies=NP)
+    load("friend_test.json", activate=False)
+    res = load("wife_test.json")
+    r.append(check("导入亡妻并设为当前角色", res.get("ok") and res.get("active"), json.dumps(res, ensure_ascii=False)))
     requests.post(f"{B}/reset", proxies=NP)
-    # 1. 故事侧先发生一件事
-    requests.post(f"{M}/events", proxies=NP, json={"source": "story", "type": "choice", "importance": 2,
-                                                   "summary": "在故事里，主人答应了周末陪小屿去看海。"})
-    # 2. 回家打招呼：要提起看海
-    r = say("我回来了。")
-    results.append(check("打招呼时提起故事里的约定", any(w in r["text"] for w in ("海", "周末")), r["text"]))
-    # 3. 说心事：判断难过、做难过表情、记下来
-    r = say("今天被老板当着大家的面骂了，好累。", "难过")
-    results.append(check("判断为难过/累并做难过表情", r.get("emotion") in ("难过", "累") and r.get("expression") == "sad",
-                         f"{r.get('emotion')} / {r.get('expression')} / {r['text']}"))
-    time.sleep(1)
-    ev = requests.get(f"{M}/all", proxies=NP).json()["events"]
-    robot_ev = [e for e in ev if e["source"] == "robot"]
-    results.append(check("被骂这件事写进记忆本", any("老板" in e["summary"] or "批评" in e["summary"] or "骂" in e["summary"] for e in robot_ev),
-                         " / ".join(e["summary"] for e in robot_ev)))
-    # 4. 喜好
-    r = say("对了，我特别喜欢喝热可可。", "开心")
-    results.append(check("喜好也能聊", bool(r["text"]), r["text"]))
-    # 5. 道别：结束相处并整理长期记忆
-    r = say("我先睡了，晚安。")
+
+    a = say("我回来了。")
+    r.append(check("以亡妻身份开口，并提起一件共同经历", a["role"] == "苏念" and any(w in a["text"] for w in WIFE_DETAILS),
+                   f"{a['role']}：{a['text']}"))
+    a = say("我好想你，要是你还在就好了。", "难过")
+    r.append(check("想念时判断为想念或难过，并做难过表情", a.get("emotion") in ("想念", "难过") and a.get("expression") == "sad",
+                   f"{a.get('emotion')} / {a.get('expression')} / {a['text']}"))
+    a = say("你还记得你最后跟我说的话吗？")
+    r.append(check("记得离开时的经历", any(w in a["text"] for w in ("好好", "要好好的")), a["text"]))
+    a = say("今天在公司被老板当众批评了，好累。", "难过")
+    r.append(check("接住难过的情绪", a.get("expression") == "sad", f"{a.get('emotion')} / {a['text']}"))
+    a = say("嗯，晚安。")
     s = requests.get(f"{B}/state", proxies=NP).json()
-    results.append(check("道别后结束这次相处", not s["session"]["active"], r["text"]))
-    time.sleep(12)
-    prof = requests.get(f"{M}/all", proxies=NP).json()["profile"]
-    results.append(check("长期记忆里有约定和喜好",
-                         any("海" in p.get("text", "") for p in prof.get("promises", []))
-                         and any("可可" in x.get("text", "") for x in prof.get("user", {}).get("likes", [])),
-                         json.dumps({k: prof.get(k) for k in ("promises", "relationship")}, ensure_ascii=False)))
-    # 6. 故事侧取上下文：拿到机器人那边的新事
-    ctx = requests.get(f"{M}/context", params={"for": "story", "peek": "1"}, proxies=NP).json()
-    results.append(check("故事侧能取到机器人这边的新事", ctx["has_new"] and ("老板" in ctx["text"] or "批评" in ctx["text"]), ctx["text"][:200]))
-    # 速度
+    r.append(check("道别后结束这次相处", not s["session"]["active"], a["text"]))
+    time.sleep(10)
+    mem = requests.get(f"{M}/all", proxies=NP).json()
+    robot_ev = [e["summary"] for e in mem["events"] if e["source"] == "robot"]
+    r.append(check("聊天写回了亡妻的记忆", any("老板" in x or "批评" in x for x in robot_ev), " / ".join(robot_ev)))
+    r.append(check("长期记忆整理出了关于他的事", any("老板" in f.get("text", "") or "批评" in f.get("text", "")
+                                                   for f in mem["profile"].get("facts", [])),
+                   json.dumps(mem["profile"].get("facts"), ensure_ascii=False)))
+
     tr = requests.get(f"{B}/state", proxies=NP).json()["transcript"]
     llm = [m["llm_ms"] for m in tr if m.get("llm_ms")]
     tts = [m["tts_ms"] for m in tr if m.get("tts_ms")]
-    print(f"速度：想 平均 {sum(llm) // max(1, len(llm))}ms（{llm}），语音合成 平均 {sum(tts) // max(1, len(tts))}ms（{tts}）")
-    print(f"合计：{sum(results)}/{len(results)} 通过")
-    return 0 if all(results) else 1
+    # 换角色：人设和记忆都换
+    chars = requests.get(f"{B}/characters", proxies=NP).json()["characters"]
+    friend = next(c["id"] for c in chars if c["name"] == "老周")
+    requests.post(f"{B}/character/activate", json={"character_id": friend}, proxies=NP)
+    a = say("在干嘛呢？")
+    r.append(check("切换后以另一个角色说话", a["role"] == "老周" and "苏念" not in a["text"], f"{a['role']}：{a['text']}"))
+    r.append(check("另一个角色看不到亡妻的记忆", "老板" not in ctx_text() and "向日葵" not in ctx_text()))
+    say("拜拜。")
+    # 换回来：记忆还在
+    requests.post(f"{B}/character/activate", json={"character_id": "wife_test"}, proxies=NP)
+    r.append(check("换回亡妻后，之前聊的还在", "老板" in ctx_text() or "批评" in ctx_text()))
+
+    print(f"速度：想 平均 {sum(llm) // max(1, len(llm))}ms，语音合成 平均 {sum(tts) // max(1, len(tts))}ms（{tts}）")
+    print(f"合计：{sum(r)}/{len(r)} 通过")
+    return 0 if all(r) else 1
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""机器人大脑：听 → 识别 → 翻记忆本 → 想 → 说 + 表情 → 写记忆本。附带演示控制台（http://127.0.0.1:8910）。
+"""机器人大脑：听 → 识别 → 读当前角色的人设和记忆 → 想 → 说 + 表情 → 写回记忆库。附带演示控制台（http://127.0.0.1:8910）。
 
 启动见 README "怎么跑"。主要环境变量见 config.py。
 """
@@ -46,20 +46,32 @@ class Brain:
         self.level = -90.0
         self.transcript: list[dict] = []
         self.notes: list[str] = []
-        self.session = {"active": False, "started": None, "last": 0.0, "history": [], "memory_text": "", "turns": 0}
+        self.session = {"active": False, "started": None, "last": 0.0, "history": [], "turns": 0,
+                        "persona_text": "", "memory_text": "", "character": None}
         self.current = {"emotion": "平静", "expression": "init"}
-        self.acks: list[bytes] = []
+        self.acks: dict[str, list[bytes]] = {}
 
-    def prepare_acks(self) -> None:
-        """提前合成几句很短的"嗯"，听完立刻先应一声。"""
-        if not C.ACK:
+    @property
+    def char_name(self) -> str:
+        return (self.session.get("character") or {}).get("name") or "角色"
+
+    @property
+    def voice_cfg(self) -> dict | None:
+        return (self.session.get("character") or {}).get("voice")
+
+    def prepare_acks(self, voice_cfg: dict | None = None) -> None:
+        """提前合成几句很短的"嗯"（按角色的音色），听完立刻先应一声。"""
+        key = json.dumps(voice_cfg or {}, sort_keys=True)
+        if not C.ACK or key in self.acks:
             return
+        wavs = []
         for word in ("嗯。", "嗯嗯。", "我在听。"):
             try:
-                self.acks.append(synthesize(word)["wav"])
+                wavs.append(synthesize(word, voice_cfg)["wav"])
             except Exception as e:  # noqa: BLE001
                 self.note(f"先应一声的语音没准备好：{e.__class__.__name__}")
                 return
+        self.acks[key] = wavs
 
     # ── 记录 ──
     def note(self, msg: str) -> None:
@@ -72,26 +84,22 @@ class Brain:
 
     # ── 相处（session）──
     def start_session(self) -> None:
-        self.session.update(active=True, started=f"{datetime.now():%H:%M:%S}", last=time.time(), history=[], turns=0)
+        """开始一次相处：从记忆库读"当前角色"的人设和全部记忆。"""
+        self.session.update(active=True, started=f"{datetime.now():%H:%M:%S}", last=time.time(), history=[], turns=0,
+                            first_turn=True)
         try:
             ctx = mem_get("/context", **{"for": "robot"})
-            self.session["memory_text"] = ctx.get("text", "")
-            self.session["fresh_story"] = [e["summary"] for e in ctx.get("new_events", [])]
-            self.note(f"开始一次相处；从记忆本取到 {len(ctx.get('new_events', []))} 条故事里的新事")
+            self.session.update(persona_text=ctx.get("persona_text", ""), memory_text=ctx.get("memory_text", ""),
+                                character=ctx.get("character"))
+            if ctx.get("has_character"):
+                n = ctx["memory_text"].count("\n- ")
+                self.note(f"开始一次相处：当前角色「{self.char_name}」，读到约 {n} 条记忆")
+                threading.Thread(target=self.prepare_acks, args=(self.voice_cfg,), daemon=True).start()
+            else:
+                self.note("开始一次相处：记忆库里还没有角色，请先导入")
         except Exception as e:  # noqa: BLE001
-            self.session["memory_text"] = ""
-            self.note(f"开始一次相处；记忆本连不上（{e.__class__.__name__}），本次不带记忆")
-
-    def refresh_memory_midway(self) -> None:
-        """相处中途，故事那边可能又有新事：有就更新。"""
-        try:
-            ctx = mem_get("/context", **{"for": "robot"})
-            if ctx.get("has_new"):
-                self.session["memory_text"] = ctx.get("text", "")
-                self.session["fresh_story"] = [e["summary"] for e in ctx.get("new_events", [])]
-                self.note(f"相处中从故事那边新增 {len(ctx.get('new_events', []))} 条记忆")
-        except Exception:  # noqa: BLE001
-            pass
+            self.session.update(persona_text="", memory_text="", character=None)
+            self.note(f"开始一次相处：记忆库连不上（{e.__class__.__name__}），本次没有人设和记忆")
 
     def end_session(self, reason: str) -> None:
         if not self.session["active"]:
@@ -122,8 +130,9 @@ class Brain:
                 return
             if not heard["text"]:
                 return
-            if self.acks and not C.MUTE:
-                threading.Thread(target=self.speaker.say, args=(random.choice(self.acks),), daemon=True).start()
+            acks = self.acks.get(json.dumps(self.voice_cfg or {}, sort_keys=True))
+            if acks and not C.MUTE:
+                threading.Thread(target=self.speaker.say, args=(random.choice(acks),), daemon=True).start()
                 time.sleep(0.05)
             self._turn(heard["text"], heard["tone_cn"], {"asr_ms": heard["ms"], "via": "语音"})
         finally:
@@ -143,18 +152,18 @@ class Brain:
         try:
             if not self.session["active"]:
                 self.start_session()
-            else:
-                self.refresh_memory_midway()
             self.session["last"] = time.time()
-            self.add_line("主人", text, tone=tone_cn, **meta)
+            self.add_line("你", text, tone=tone_cn, **meta)
             self.status = "思考中"
             try:
                 hint = ""
-                fresh = self.session.pop("fresh_story", None)
-                if fresh:
-                    hint = (f"（提示：这一句的回复里必须提到你们刚在网页故事里经历的事：{'；'.join(fresh)}。"
-                            "先接住主人的话，再自然地提起，像真的一起经历过。）")
-                out = chat_turn(self.session["memory_text"], self.session["history"], text, tone_cn, hint)
+                if self.session.pop("first_turn", False) and self.session.get("character"):
+                    shared = [l[2:] for l in self.session["memory_text"].split("【后来")[0].splitlines() if l.startswith("- ")]
+                    if shared:
+                        hint = ("（提示：这是你们这次相处的第一句。先接住他，回复里必须自然地提到一件你们共同经历过的具体小事，"
+                                f"比如：{random.choice(shared)}）")
+                out = chat_turn(self.session["persona_text"], self.session["memory_text"], self.session["history"],
+                                text, tone_cn, hint)
             except Exception as e:  # noqa: BLE001
                 self.note(f"对话模型出错：{e}")
                 out = {"emotion": "平静", "expression": "init", "reply": "抱歉，我刚刚走神了，你能再说一次吗？",
@@ -168,14 +177,14 @@ class Brain:
             self.status = "说话中"
             tts_ms, via, provider = 0, "", ""
             try:
-                t = synthesize(out["reply"])
+                t = synthesize(out["reply"], self.voice_cfg)
                 tts_ms, provider = t["ms"], t["provider"]
-                self.add_line(C.CHARACTER, out["reply"], emotion=out["emotion"], expression=out["expression"],
+                self.add_line(self.char_name, out["reply"], emotion=out["emotion"], expression=out["expression"],
                               llm_ms=out.get("ms"), tts_ms=tts_ms, tts=provider, head=head,
                               seconds=round(duration(t["wav"]), 1))
                 via = self.speaker.say(t["wav"])
             except Exception as e:  # noqa: BLE001
-                self.add_line(C.CHARACTER, out["reply"], emotion=out["emotion"], expression=out["expression"],
+                self.add_line(self.char_name, out["reply"], emotion=out["emotion"], expression=out["expression"],
                               llm_ms=out.get("ms"), head=head, error=f"语音合成失败：{e}")
             if via:
                 self.transcript[-1]["via"] = via
@@ -191,7 +200,7 @@ class Brain:
                 except Exception as e:  # noqa: BLE001
                     self.note(f"写记忆本失败：{e.__class__.__name__}")
             if out["end_session"] or any(w in text for w in C.END_WORDS):
-                self.end_session("主人道别")
+                self.end_session("道别")
         finally:
             if self.mic:
                 time.sleep(0.3)
@@ -205,14 +214,31 @@ class Brain:
                 "asr": "已就绪" if self.asr.model else (self.asr.error or "加载中"),
                 "mic": ("已开启" if self.mic and not self.mic.error else (self.mic.error if self.mic else "未开启（MIC=0）")),
                 "head": self.speaker.head_note, "mute": C.MUTE,
-                "models": {"chat": C.CHAT_MODEL, "tts": f"{C.TTS_PROVIDER}/{C.TTS_VOICE}"}}
+                "character": {k: (self.session.get("character") or {}).get(k) for k in ("id", "name")},
+                "models": {"chat": C.CHAT_MODEL, "tts": self._tts_label()}}
+
+    def _tts_label(self) -> str:
+        v = self.voice_cfg or {}
+        prov = v.get("provider") or C.TTS_PROVIDER
+        voice = v.get("voice") or (C.TTS_DASHSCOPE_VOICE if prov == "dashscope" else C.TTS_STEPFUN_VOICE)
+        return f"{'百炼' if prov == 'dashscope' else '阶跃'}/{voice}"
 
     def reset(self) -> None:
-        mem_post("/reset")
+        """清空当前角色的聊天记忆（保留导入的经历）。"""
+        mem_post("/reset", scope="chat")
         self.transcript, self.notes = [], []
-        self.session.update(active=False, history=[], memory_text="", turns=0)
+        self.session.update(active=False, history=[], turns=0)
         self.current = {"emotion": "平静", "expression": "init"}
-        self.note("已清空演示数据")
+        self.note("已清空和当前角色的聊天记忆（导入的经历保留）")
+
+    def switch_character(self, character_id: str) -> dict:
+        res = mem_post("/characters/activate", {"character_id": character_id})
+        if res.get("ok"):
+            self.end_session("切换角色")
+            self.session.update(character=None, persona_text="", memory_text="")
+            self.transcript = []
+            self.note(f"已切换当前角色：{character_id}，下一句话开始用新人设")
+        return res
 
 
 def make_handler(brain: Brain):
@@ -231,6 +257,11 @@ def make_handler(brain: Brain):
                 return self._send(200, CONSOLE_HTML.read_bytes(), "text/html; charset=utf-8")
             if self.path == "/state":
                 return self._send(200, brain.state())
+            if self.path == "/characters":
+                try:
+                    return self._send(200, mem_get("/characters"))
+                except Exception as e:  # noqa: BLE001
+                    return self._send(200, {"characters": [], "error": f"记忆库连不上：{e.__class__.__name__}"})
             if self.path == "/memory":
                 try:
                     return self._send(200, mem_get("/all"))
@@ -253,6 +284,8 @@ def make_handler(brain: Brain):
             if self.path == "/session/end":
                 brain.end_session("控制台按钮")
                 return self._send(200, {"ok": True})
+            if self.path == "/character/activate":
+                return self._send(200, brain.switch_character(str(data.get("character_id") or "")))
             if self.path == "/reset":
                 brain.reset()
                 return self._send(200, {"ok": True})
@@ -277,7 +310,7 @@ def main() -> None:
     brain = Brain()
     threading.Thread(target=brain.asr.load, daemon=True).start()
     threading.Thread(target=brain.idle_watch, daemon=True).start()
-    threading.Thread(target=brain.prepare_acks, daemon=True).start()
+    threading.Thread(target=brain.prepare_acks, args=(None,), daemon=True).start()
     if C.MIC:
         def level(db, speaking):
             brain.level = db
@@ -286,7 +319,7 @@ def main() -> None:
         brain.status = "在听" if not brain.mic.error else "等待"
         if brain.mic.error:
             brain.note(brain.mic.error)
-    brain.note(f"大脑已启动 · 对话 {C.CHAT_MODEL} · 语音 {C.TTS_PROVIDER}/{C.TTS_VOICE} · {brain.speaker.head_note}"
+    brain.note(f"大脑已启动 · 对话 {C.CHAT_MODEL} · 语音 {brain._tts_label()} · {brain.speaker.head_note}"
                + (" · 静音模式" if C.MUTE else ""))
     print(f"演示控制台：http://127.0.0.1:{C.CONSOLE_PORT}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", C.CONSOLE_PORT), make_handler(brain)).serve_forever()
